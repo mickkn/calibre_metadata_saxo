@@ -2,3 +2,6 @@ calibrevenv/
 .idea/
 chromedriver.exe
 debug.log
+_Obsolete/
+calibre_repos/
+calibre/
