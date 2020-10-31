@@ -9,6 +9,10 @@ import socket
 import time
 import datetime
 import json
+try:
+    from queue import Empty, Queue
+except ImportError:
+    from Queue import Empty, Queue
 from six import text_type as unicode
 from html5_parser import parse
 from lxml.html import tostring
@@ -23,17 +27,14 @@ class Saxo(Source):
     supported_platforms = ['windows', 'osx', 'linux']
     author = 'Mick Kirkegaard'
     version = (1, 0, 0)
-    minimum_calibre_version = (5, 4, 2)
+    minimum_calibre_version = (5, 0, 1)
 
-    capabilities = frozenset(['identify', 'cover'])
-    touched_fields = frozenset(['identifier:isbn', 'title', 'authors', 'comments', 'publisher', 'pubdate'])
+    capabilities = frozenset(['identify'])
+    touched_fields = frozenset(['identifier:isbn', 'title', 'authors', 'rating', 'comments', 'publisher', 'language', 'pubdate'])
 
     supports_gzip_transfer_encoding = True
 
     BASE_URL = 'https://www.saxo.com/dk/products/search?query='
-
-    def get_book_url(self, identifiers):
-        return
 
     def identify(self, log, result_queue, abort, title=None, authors=None, identifiers={}, timeout=30):
         
@@ -81,19 +82,6 @@ class Saxo(Source):
 
         return None
 
-    def get_cached_cover_url(self, identifiers):
-        return
-
-    def cached_identifier_to_cover_url(self, id_):
-        return
-
-    def _get_cached_identifier_to_cover_url(self, id_):
-        return
-
-    def download_cover(self, log, result_queue, abort, title=None, authors=None, identifiers={}, timeout=30):
-        return
-
-
 def parse_comments(root):
     # Look for description
     description_node = root.xpath('(//div[@class="product-page-block"]//p)[1]')
@@ -120,6 +108,7 @@ class Worker(Thread):  # Get details
         self.url = url
         self.result_queue = result_queue
         self.log = log
+        self.language = None
         self.timeout = timeout
         self.relevance = relevance
         self.plugin = plugin
@@ -201,6 +190,20 @@ class Worker(Thread):  # Get details
             self.log.exception('Error parsing authors for url: %r' % self.url)
             self.authors = None
 
+        # Strip the rating
+        try:
+            self.rating = float(json_root['aggregateRating']['ratingValue'])
+        except:
+            self.log.exception('Error parsing rating for url: %r' % self.url)
+            self.rating = 0.0
+
+        # Strip the ISBN of the book
+        try:
+            self.isbn = json_root['isbn']
+        except:
+            self.log.exception('Error parsing isbn for url: %r' % self.url)
+            self.isbn = None
+
         # Strip the comments/blurb of the book
         try:
             self.comments = parse_comments(root)
@@ -210,11 +213,9 @@ class Worker(Thread):  # Get details
 
         # Strip the URL for cover here
         try:
-            #self.cover_url = root['cover_url']
-            #self.log.info('Parsed URL for cover:%r' % self.cover_url)
-            #self.plugin.cache_identifier_to_cover_url(self.biblionetid, self.cover_url)
-            self.cover_url = "Test cover url"
-            self.log.info("Strip cover url here")
+            self.cover_url = json_root['image']
+            self.log.info('Parsed URL for cover:%r' % self.cover_url)
+            self.plugin.cache_identifier_to_cover_url(None, self.cover_url)
         except:
             self.log.exception('Error parsing cover for url: %r' % self.url)
             self.has_cover = bool(self.cover_url)
@@ -226,7 +227,13 @@ class Worker(Thread):  # Get details
         except:
             self.log.exception('Error parsing publisher for url: %r' % self.url)
 
-        # Strip the year of publish here
+        # Strip the language of the book
+        try:
+            self.language = json_root['inLanguage']
+        except:
+            self.log.exception('Error parsing language for url: %r' % self.url)
+
+        # Strip the date of publish here
         try:
             pubdate_node = root.xpath('(//dl[@class="product-info-list"]//dd)[2]') # Format dd-mm-yyyy
             date_str = pubdate_node[0].text.strip()
@@ -237,8 +244,21 @@ class Worker(Thread):  # Get details
 
         # Setup the metadata
         meta_data = Metadata(self.title, self.authors)
-        meta_data.set_identifier('isbn', self.isbn)    
+        meta_data.set_identifier('isbn', self.isbn)
 
+        # Set rating
+        if self.rating:
+            try:
+                meta_data.rating = self.rating
+            except:
+                self.log.exception('Error loading rating')
+
+        # Set ISBN
+        if self.isbn:
+            try:
+                meta_data.isbn = self.isbn
+            except:
+                self.log.exception('Error loading ISBN')
         # Set relevance
         if self.relevance:
             try:
@@ -257,6 +277,11 @@ class Worker(Thread):  # Get details
                 meta_data.publisher = self.publisher
             except:
                 self.log.exception('Error loading publisher')
+        if self.language:
+            try:
+                meta_data.languages = self.language
+            except:
+                self.log.exception('Error loading language')
         # Set comments/blurb
         if self.comments:
             try:
@@ -277,7 +302,7 @@ class Worker(Thread):  # Get details
 if __name__ == '__main__':  # tests
     # To run these test use:
     # calibre-customize -b . ; calibre-debug -e __init__.py
-    from calibre.ebooks.metadata.sources.test import (test_identify_plugin, title_test, authors_test, series_test)
+    from calibre.ebooks.metadata.sources.test import (test_identify_plugin, title_test, authors_test)
 
     tests = [(  # A book with an ISBN
                 {
