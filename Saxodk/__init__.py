@@ -1,6 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import, print_function)
 
 __license__ = 'GPL v3'
@@ -10,12 +8,11 @@ __docformat__ = 'restructuredtext el'
 import socket
 import time
 import datetime
-
+import json
 from six import text_type as unicode
 from html5_parser import parse
-from lxml.html import fromstring, tostring
+from lxml.html import tostring
 from threading import Thread
-from calibre.ebooks import normalize
 from calibre.ebooks.metadata.sources.base import Source
 from calibre.ebooks.metadata.book.base import Metadata
 from calibre.library.comments import sanitize_comments_html
@@ -26,10 +23,10 @@ class Saxo(Source):
     supported_platforms = ['windows', 'osx', 'linux']
     author = 'Mick Kirkegaard'
     version = (1, 0, 0)
-    minimum_calibre_version = (0, 8, 4)
+    minimum_calibre_version = (5, 4, 2)
 
     capabilities = frozenset(['identify', 'cover'])
-    touched_fields = frozenset(['identifier:isbn', 'title', 'authors', 'tags', 'comments', 'publisher', 'pubdate', 'series'])
+    touched_fields = frozenset(['identifier:isbn', 'title', 'authors', 'comments', 'publisher', 'pubdate'])
 
     supports_gzip_transfer_encoding = True
 
@@ -99,11 +96,7 @@ class Saxo(Source):
 
 def parse_comments(root):
     # Look for description
-    description_node = root.xpath('//div[@class="product-page-block__container product-page-block__container--more product-page-block__container--opened"]//p')
-    print(description_node[0].text.strip())
-    for i in description_node:
-        print(i.text.strip())
-    """
+    description_node = root.xpath('(//div[@class="product-page-block"]//p)[1]')
     if description_node:
         desc = description_node[0] if len(description_node) == 1 else description_node[1]
         less_link = desc.xpath('a[@class="actionLinkLite"]')
@@ -114,16 +107,15 @@ def parse_comments(root):
             comments = comments.replace('  ', ' ')
         comments = sanitize_comments_html(comments)
         return comments
-    """
 
 class Worker(Thread):  # Get details
-
     '''
     Get book details from Saxos book page in a separate thread
     '''
     def __init__(self, url, result_queue, browser, log, relevance, plugin, timeout=20):
         Thread.__init__(self)
         self.title = None
+        self.isbn = None
         self.daemon = True
         self.url = url
         self.result_queue = result_queue
@@ -133,11 +125,9 @@ class Worker(Thread):  # Get details
         self.plugin = plugin
         self.browser = browser.clone_browser()
         self.cover_url = None
-        self.series_index = None
         self.authors = []
         self.comments = None
-        self.yr_msg1 = 'No publishing year found'
-        self.yr_msg2 = 'An error occured'
+        self.pubdate = None
 
     def run(self):
         self.log.info("    Worker.run: self: ", self)
@@ -154,7 +144,6 @@ class Worker(Thread):  # Get details
         # Get some data from the website
         try:
             raw = self.browser.open_novisit(self.url, timeout=self.timeout).read().strip()
-            #self.log.info(raw)
         # Do some error handling if it fails to read data
         except Exception as e:
             if callable(getattr(e, 'getcode', None)) and e.getcode() == 404:
@@ -178,18 +167,27 @@ class Worker(Thread):  # Get details
         # Clean the html data
         try:
             root = parse(raw)
-            #root = json.loads(raw)
         except:
             self.log.error("Error cleaning HTML")
             return
 
+        # Get the json data
+        try:
+            json_raw = root.xpath('(//script[@type="application/ld+json"])[2]')
+            json_root = json.loads(json_raw[0].text.strip())
+            #print(json.dumps(json_root, indent=4, sort_keys=True))
+        except:
+            self.log.error("Error loading JSON data")
+            return
+
         # Strip the title of the book
         try:
-            title_node = root.xpath('//h1[@class="product-page-heading__title"]')
-            if not title_node:
-                return None
-            self.title = title_node[0].text.strip()
-            self.log.info(f"Title: {title_node[0].text.strip()}")
+            #title_node = root.xpath('//h1[@class="product-page-heading__title"]')
+            #if not title_node:
+            #    return None
+            #self.title = title_node[0].text.strip()
+            #self.log.info(f"Title: {title_node[0].text.strip()}")
+            self.title = json_root['name']
         except:
             self.log.exception('Error parsing title for url: %r' % self.url)
 
@@ -198,14 +196,12 @@ class Worker(Thread):  # Get details
         try:
             author_node = root.xpath('//h2[@class="product-page-heading__autor"]//a')
             self.authors.append(author_node[0].text.strip())
-            self.log.info(f"Author: {author_node[0].text.strip()}")
+            #self.log.info(f"Author: {author_node[0].text.strip()}")
         except:
             self.log.exception('Error parsing authors for url: %r' % self.url)
             self.authors = None
 
-        # Strip the tags of the book
-
-        # Strip the comments of the book
+        # Strip the comments/blurb of the book
         try:
             self.comments = parse_comments(root)
         except:
@@ -225,73 +221,56 @@ class Worker(Thread):  # Get details
 
         # Strip the book Publisher here
         try:
-            #self.publisher = root['publisher']
-            #self.log.info('Parsed publisher:%s' % self.publisher)
-            self.publisher = "Test publisher"
-            self.log.info("Strip the publisher name here")
+            self.publisher = json_root['publisher']['name']
+            #self.log.info(f"Publisher: {self.publisher}")
         except:
             self.log.exception('Error parsing publisher for url: %r' % self.url)
 
-        # Strip the book tags here
-        try:
-            #self.tags = root['categories'].replace('DDC: ', 'DDC:').replace('-', '').split()[:-1]
-            #self.log.info('Parsed tags:%s' % self.tags)
-            self.tags = "Test tag"
-            self.log.info("Strip the book tags here")
-        except:
-            self.log.exception('Error parsing tags for url: %r' % self.url)
-
         # Strip the year of publish here
         try:
-            #self.pubdate = root['yr_published']
-            #self.log.info('Parsed publication date:%s' % self.pubdate)
-            self.pubdate = "11-01-20"
-            self.log.info("Strip the year of publish here")
+            pubdate_node = root.xpath('(//dl[@class="product-info-list"]//dd)[2]') # Format dd-mm-yyyy
+            date_str = pubdate_node[0].text.strip()
+            format_str = '%d-%m-%Y' # The format
+            self.pubdate = datetime.datetime.strptime(date_str, format_str)
         except:
             self.log.exception('Error parsing published date for url: %r' % self.url)
 
         # Setup the metadata
         meta_data = Metadata(self.title, self.authors)
-        #meta_data.set_identifier('isbn', self.isbn)    
+        meta_data.set_identifier('isbn', self.isbn)    
 
-        if self.series_index:
-            try:
-                meta_data.series_index = float(self.series_index)
-            except:
-                self.log.exception('Error loading series')
+        # Set relevance
         if self.relevance:
             try:
                 meta_data.source_relevance = self.relevance
             except:
                 self.log.exception('Error loading relevance')
+        # Set cover url
         if self.cover_url:
             try:
                 meta_data.cover_url = self.cover_url
             except:
                 self.log.exception('Error loading cover_url')
+        # Set publisher
         if self.publisher:
             try:
                 meta_data.publisher = self.publisher
             except:
                 self.log.exception('Error loading publisher')
-        if self.tags:
-            try:
-                meta_data.tags = self.tags
-            except:
-                self.log.exception('Error loading tags')
+        # Set comments/blurb
         if self.comments:
             try:
                 meta_data.comments = self.comments
             except:
                 self.log.exception("Error loading comments")
+        # Set publisher data
         if self.pubdate:
             try:
-                if self.pubdate not in (self.yr_msg1, self.yr_msg2):
-                    d = datetime.date(int(self.pubdate), 1, 1)
-                    meta_data.pubdate = d
+                meta_data.pubdate = self.pubdate
             except:
                 self.log.exception('Error loading pubdate')
 
+        # Put meta data
         self.plugin.clean_downloaded_metadata(meta_data)
         self.result_queue.put(meta_data)
 
@@ -302,12 +281,12 @@ if __name__ == '__main__':  # tests
 
     tests = [(  # A book with an ISBN
                 {
-                'identifiers': {'isbn': '9788740065756'},
-                'title': 'Casper', 
-                'authors': ['Martin Kongstad']
+                'identifiers': {'isbn': '9788702015379'},
+                'title': 'Eventyret om ringen', 
+                'authors': ['J. R. R. Tolkien']
                 },[
-                    title_test('Casper', exact=True),
-                    authors_test(['Martin Kongstad'])]
+                    title_test('Eventyret om ringen', exact=True),
+                    authors_test(['J. R. R. Tolkien'])]
             ), 
             (   # A book with two Authors
                 {
