@@ -20,6 +20,7 @@ from threading import Thread
 from calibre.ebooks.metadata.sources.base import Source
 from calibre.ebooks.metadata.book.base import Metadata
 from calibre.library.comments import sanitize_comments_html
+from calibre.utils.localization import canonicalize_lang
 
 class Saxo(Source):
     name = 'Saxo'
@@ -118,6 +119,15 @@ class Worker(Thread):  # Get details
         self.comments = None
         self.pubdate = None
 
+        lm = {
+            'eng': ('English', 'Engelsk'),
+            'dan': ('Danish', 'Dansk'),
+        }
+        self.lang_map = {}
+        for code, names in lm.items():
+            for name in names:
+                self.lang_map[name] = code
+
     def run(self):
         self.log.info("    Worker.run: self: ", self)
         try:
@@ -184,7 +194,8 @@ class Worker(Thread):  # Get details
         #TODO Fix multiply authors
         try:
             author_node = root.xpath('//h2[@class="product-page-heading__autor"]//a')
-            self.authors.append(author_node[0].text.strip())
+            for name in author_node:
+                self.authors.append(name.text.strip())
             #self.log.info(f"Author: {author_node[0].text.strip()}")
         except:
             self.log.exception('Error parsing authors for url: %r' % self.url)
@@ -229,7 +240,9 @@ class Worker(Thread):  # Get details
 
         # Strip the language of the book
         try:
-            self.language = json_root['inLanguage']
+            language = json_root['inLanguage']['name']
+            language = self.lang_map.get(language, None)
+            self.language = language
         except:
             self.log.exception('Error parsing language for url: %r' % self.url)
 
@@ -252,7 +265,6 @@ class Worker(Thread):  # Get details
                 meta_data.rating = self.rating
             except:
                 self.log.exception('Error loading rating')
-
         # Set ISBN
         if self.isbn:
             try:
@@ -277,9 +289,10 @@ class Worker(Thread):  # Get details
                 meta_data.publisher = self.publisher
             except:
                 self.log.exception('Error loading publisher')
+        # Set language
         if self.language:
             try:
-                meta_data.languages = self.language
+                meta_data.language = self.language
             except:
                 self.log.exception('Error loading language')
         # Set comments/blurb
