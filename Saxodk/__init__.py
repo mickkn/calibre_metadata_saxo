@@ -21,9 +21,13 @@ from calibre.ebooks.metadata.sources.base import Source
 from calibre.ebooks.metadata.book.base import Metadata
 from calibre.library.comments import sanitize_comments_html
 
+# This is a metadata plugin for Calibre. It has been made and tested on Calibre 5.4.2
+# Most of the stuff is taken from the Goodreads plugin and Biblionet plugin.
+# I've just gathered everything in one __init__.py file.
+
 class Saxo(Source):
     name = 'Saxo'
-    description = _('Downloads Metadata and covers from Saxo.dk')
+    description = ('Downloads Metadata and Covers from Saxo.dk based on ISBN')
     supported_platforms = ['windows', 'osx', 'linux']
     author = 'Mick Kirkegaard'
     version = (1, 0, 0)
@@ -32,16 +36,14 @@ class Saxo(Source):
     capabilities = frozenset(['identify', 'cover'])
     touched_fields = frozenset(['identifier:isbn', 'title', 'authors', 'rating', 'comments', 'publisher', 'language', 'pubdate'])
 
-    #supports_gzip_transfer_encoding = True
+    supports_gzip_transfer_encoding = True
 
     BASE_URL = 'https://www.saxo.com/dk/products/search?query='
 
     def identify(self, log, result_queue, abort, title=None, authors=None, identifiers={}, timeout=30):
-        
-        # Print outs
-        print("Identify")
-        print("    Identifiers are: ", identifiers)
-
+        '''
+        Redefined identity() function
+        '''
         # Create matches list
         matches = []
 
@@ -83,12 +85,20 @@ class Saxo(Source):
         return None
 
     def get_cached_cover_url(self, identifiers):
+        '''
+        Redefined get_cached_cover_url() function
+        Just fetch cached the cover url based on isbn, we don't
+        use a saxo id in this plugin yet.
+        '''
         isbn = identifiers.get('isbn', None)
         url = self.cached_identifier_to_cover_url(isbn)
         return url
 
-    def download_cover(self, log, result_queue, abort,
-                       title=None, authors=None, identifiers={}, timeout=30):
+    def download_cover(self, log, result_queue, abort, title=None, authors=None, identifiers={}, timeout=30):
+        '''
+        Redefined get_cached_cover_url() function
+        Stolen from Goodreads.
+        '''
         cached_url = self.get_cached_cover_url(identifiers)
         if cached_url is None:
             log.info('No cached cover found, running identify')
@@ -116,7 +126,7 @@ class Saxo(Source):
         if abort.is_set():
             return
         br = self.browser
-        log('Downloading cover from:', cached_url)
+        log('    Downloading cover from:', cached_url)
         try:
             cdata = br.open_novisit(cached_url, timeout=timeout).read()
             result_queue.put((self, cdata))
@@ -124,6 +134,10 @@ class Saxo(Source):
             log.exception('Failed to download cover from:', cached_url)
 
 def parse_comments(root):
+    '''
+    Function for parsing comments and clean them up a little
+    Re-written script from the Goodreads script
+    '''
     # Look for description
     description_node = root.xpath('(//div[@class="product-page-block"]//p)[1]')
     if description_node:
@@ -161,6 +175,7 @@ class Worker(Thread):  # Get details
         self.comments = None
         self.pubdate = None
 
+        # Mapping language to something calibre understand.
         lm = {
             'eng': ('English', 'Engelsk'),
             'dan': ('Danish', 'Dansk'),
@@ -175,14 +190,17 @@ class Worker(Thread):  # Get details
         try:
             self.get_details()
         except:
-            self.log.exception('get_details failed for url: %r' % self.url)
+            self.log.exception('get_details() failed for url: %r' % self.url)
 
     def get_details(self):
+        '''
+        The get_details() function for stripping the website for all information
+        '''
         self.log.info("    Worker.get_details:")
         self.log.info("        self:     ", self)
         self.log.info("        self.url: ", self.url)
 
-        # Get some data from the website
+        # Parse the html code from the website
         try:
             raw = self.browser.open_novisit(self.url, timeout=self.timeout).read().strip()
         # Do some error handling if it fails to read data
@@ -200,19 +218,19 @@ class Worker(Thread):  # Get details
                 self.log.exception(msg)
             return
 
-        # Do some error handling
+        # Do some error handling if the html code returned 404
         if "<title>404 - " == raw:
             self.log.error('URL malformed: %r' % self.url)
             return
 
-        # Clean the html data
+        # Clean the html data a little
         try:
             root = parse(raw)
         except:
             self.log.error("Error cleaning HTML")
             return
 
-        # Get the json data
+        # Get the json data within the HTML code (some stuff is easier to get with json)
         try:
             json_raw = root.xpath('(//script[@type="application/ld+json"])[2]')
             json_root = json.loads(json_raw[0].text.strip())
@@ -221,13 +239,13 @@ class Worker(Thread):  # Get details
             self.log.error("Error loading JSON data")
             return
 
-        # Strip the title of the book
+        # Get the title of the book
         try:
             self.title = json_root['name']
         except:
             self.log.exception('Error parsing title for url: %r' % self.url)
 
-        # Strip the author of the book here
+        # Get the author of the book
         try:
             author_node = root.xpath('//h2[@class="product-page-heading__autor"]//a')
             for name in author_node:
@@ -236,43 +254,43 @@ class Worker(Thread):  # Get details
             self.log.exception('Error parsing authors for url: %r' % self.url)
             self.authors = None
 
-        # Strip the rating
+        # Some books have ratings, let's use them.
         try:
             self.rating = float(json_root['aggregateRating']['ratingValue'])
         except:
             self.log.exception('Error parsing rating for url: %r' % self.url)
             self.rating = 0.0
 
-        # Strip the ISBN of the book
+        # Get the ISBN number from the site
         try:
             self.isbn = json_root['isbn']
         except:
             self.log.exception('Error parsing isbn for url: %r' % self.url)
             self.isbn = None
 
-        # Strip the comments/blurb of the book
+        # Get the comments/blurb for the book
         try:
             self.comments = parse_comments(root)
         except:
             self.log.exception('Error parsing comments for url: %r' % self.url)
             self.comments = None
 
-        # Strip the URL for cover here
+        # Parse the cover url for downloading the cover.
         try:
             self.cover_url = json_root['image']
-            self.log.info('Parsed URL for cover:%r' % self.cover_url)
+            self.log.info('    Parsed URL for cover: %r' % self.cover_url)
             self.plugin.cache_identifier_to_cover_url(self.isbn, self.cover_url)
         except:
             self.log.exception('Error parsing cover for url: %r' % self.url)
             self.has_cover = bool(self.cover_url)
 
-        # Strip the book Publisher here
+        # Get the publisher name
         try:
             self.publisher = json_root['publisher']['name']
         except:
             self.log.exception('Error parsing publisher for url: %r' % self.url)
 
-        # Strip the language of the book
+        # Get the language of the book. Only english and danish are supported tho
         try:
             language = json_root['inLanguage']['name']
             language = self.lang_map.get(language, None)
@@ -280,9 +298,10 @@ class Worker(Thread):  # Get details
         except:
             self.log.exception('Error parsing language for url: %r' % self.url)
 
-        # Strip the date of publish here
+        # Get the publisher date
         try:
-            pubdate_node = root.xpath('(//dl[@class="product-info-list"]//dd)[2]') # Format dd-mm-yyyy
+            #pubdate_node = root.xpath('(//dl[@class="product-info-list"]//dd)[2]') # Format dd-mm-yyyy
+            pubdate_node = root.xpath('//div[@class="product-page-block__container"]//dd') # Format dd-mm-yyyy
             date_str = pubdate_node[0].text.strip()
             format_str = '%d-%m-%Y' # The format
             self.pubdate = datetime.datetime.strptime(date_str, format_str)
@@ -353,21 +372,21 @@ if __name__ == '__main__':  # tests
 
     tests = [(  # A book with an ISBN
                 {
-                'identifiers': {'isbn': '9788702015379'},
-                'title': 'Eventyret om ringen', 
-                'authors': ['J. R. R. Tolkien']
-                },[
-                    title_test('Eventyret om ringen', exact=True),
-                    authors_test(['J. R. R. Tolkien'])]
-            ), 
-            (   # A book with two Authors
-                {
                 'identifiers': {'isbn': '9788740065756'},
                 'title': 'Casper', 
                 'authors': ['Martin Kongstad']
                 },[
                     title_test('Casper', exact=True),
                     authors_test(['Martin Kongstad'])]
+            ), 
+            (   # A book with two Authors
+                {
+                'identifiers': {'isbn': '9788771761306'},
+                'title': 'Elverfolket- Ulverytterne og solfolket', 
+                'authors': ['Richard Pini & Wendy']
+                },[
+                    title_test('Elverfolket- Ulverytterne og solfolket', exact=True),
+                    authors_test(['Richard Pini', 'Wendy'])]
             )
             ]
 
