@@ -29,10 +29,10 @@ class Saxo(Source):
     version = (1, 0, 0)
     minimum_calibre_version = (5, 0, 1)
 
-    capabilities = frozenset(['identify'])
+    capabilities = frozenset(['identify', 'cover'])
     touched_fields = frozenset(['identifier:isbn', 'title', 'authors', 'rating', 'comments', 'publisher', 'language', 'pubdate'])
 
-    supports_gzip_transfer_encoding = True
+    #supports_gzip_transfer_encoding = True
 
     BASE_URL = 'https://www.saxo.com/dk/products/search?query='
 
@@ -81,6 +81,47 @@ class Saxo(Source):
                 break
 
         return None
+
+    def get_cached_cover_url(self, identifiers):
+        isbn = identifiers.get('isbn', None)
+        url = self.cached_identifier_to_cover_url(isbn)
+        return url
+
+    def download_cover(self, log, result_queue, abort,
+                       title=None, authors=None, identifiers={}, timeout=30):
+        cached_url = self.get_cached_cover_url(identifiers)
+        if cached_url is None:
+            log.info('No cached cover found, running identify')
+            rq = Queue()
+            self.identify(log, rq, abort, title=title, authors=authors,
+                          identifiers=identifiers)
+            if abort.is_set():
+                return
+            results = []
+            while True:
+                try:
+                    results.append(rq.get_nowait())
+                except Empty:
+                    break
+            results.sort(key=self.identify_results_keygen(
+                title=title, authors=authors, identifiers=identifiers))
+            for mi in results:
+                cached_url = self.get_cached_cover_url(mi.identifiers)
+                if cached_url is not None:
+                    break
+        if cached_url is None:
+            log.info('No cover found')
+            return
+
+        if abort.is_set():
+            return
+        br = self.browser
+        log('Downloading cover from:', cached_url)
+        try:
+            cdata = br.open_novisit(cached_url, timeout=timeout).read()
+            result_queue.put((self, cdata))
+        except:
+            log.exception('Failed to download cover from:', cached_url)
 
 def parse_comments(root):
     # Look for description
@@ -220,7 +261,7 @@ class Worker(Thread):  # Get details
         try:
             self.cover_url = json_root['image']
             self.log.info('Parsed URL for cover:%r' % self.cover_url)
-            self.plugin.cache_identifier_to_cover_url(None, self.cover_url)
+            self.plugin.cache_identifier_to_cover_url(self.isbn, self.cover_url)
         except:
             self.log.exception('Error parsing cover for url: %r' % self.url)
             self.has_cover = bool(self.cover_url)
