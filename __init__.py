@@ -30,15 +30,21 @@ class Saxo(Source):
     description = ('Downloads Metadata and Covers from Saxo.dk based on ISBN')
     supported_platforms = ['windows', 'osx', 'linux']
     author = 'Mick Kirkegaard'
-    version = (1, 0, 0)
+    version = (1, 1, 0)
     minimum_calibre_version = (5, 0, 1)
 
     capabilities = frozenset(['identify', 'cover'])
-    touched_fields = frozenset(['identifier:isbn', 'title', 'authors', 'rating', 'comments', 'publisher', 'language', 'pubdate'])
+    touched_fields = frozenset(['identifier:isbn', 'identifier:saxo', 'title', 'authors', 'rating', 'comments', 'publisher', 'language', 'pubdate'])
 
     supports_gzip_transfer_encoding = True
 
+    ID_NAME = 'saxo'
     BASE_URL = 'https://www.saxo.com/dk/products/search?query='
+
+    def get_book_url(self, identifiers):
+        saxo_id = identifiers.get(self.ID_NAME, None)
+        if saxo_id:
+            return ('Saxo', saxo_id, self.url)
 
     def identify(self, log, result_queue, abort, title=None, authors=None, identifiers={}, timeout=30):
         '''
@@ -55,6 +61,21 @@ class Saxo(Source):
         if isbn:
             print("    Found isbn %s" % (isbn))
             matches.append('%s%s' % (Saxo.BASE_URL, isbn))
+        
+        if title and authors:
+            search_str = title
+            for name in authors:
+                search_str = search_str + " " + name
+            search = ('%s%s' % (Saxo.BASE_URL, search_str)).replace(" ", "+")
+            print(search)
+            saxo_raw = br.open_novisit(search, timeout=30).read().strip()
+            saxo_root = parse(saxo_raw)
+            saxo_nodes = saxo_root.xpath('//li[@data-bind="text:$data.Label"]')#/preceding-sibling::li/a') #[@class="product-list-info__title"]/a')
+            log.info(saxo_nodes)
+            for node in saxo_nodes:
+                print(node)
+            
+        
         # Return if no ISBN
         if abort.is_set():
             return
@@ -311,6 +332,7 @@ class Worker(Thread):  # Get details
         # Setup the metadata
         meta_data = Metadata(self.title, self.authors)
         meta_data.set_identifier('isbn', self.isbn)
+        meta_data.set_identifier('saxo', self.url)
 
         # Set rating
         if self.rating:
