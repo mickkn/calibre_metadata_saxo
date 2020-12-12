@@ -51,6 +51,7 @@ class Saxo(Source):
         Redefined identity() function
         '''
         # Create matches list
+        google_matches = []
         matches = []
 
         # Initialize browser object
@@ -61,21 +62,29 @@ class Saxo(Source):
         if isbn:
             print("    Found isbn %s" % (isbn))
             matches.append('%s%s' % (Saxo.BASE_URL, isbn))
-        
+
+        # Add Saxo url to matches if present
+        saxo = identifiers.get('saxo', None)
+        if saxo:
+            print("    Found saxo %s" % (saxo))
+            matches.append(saxo)
+
         if title and authors:
             search_str = title
             for name in authors:
                 search_str = search_str + " " + name
-            search = ('%s%s' % (Saxo.BASE_URL, search_str)).replace(" ", "+")
-            print(search)
-            saxo_raw = br.open_novisit(search, timeout=30).read().strip()
-            saxo_root = parse(saxo_raw)
-            saxo_nodes = saxo_root.xpath('//li[@data-bind="text:$data.Label"]')#/preceding-sibling::li/a') #[@class="product-list-info__title"]/a')
-            log.info(saxo_nodes)
-            for node in saxo_nodes:
-                print(node)
+            log.info("    Making matches with title: %s" % title)
+            log.info('%s' % ('https://www.google.com/search?q=site:saxo.com %s+epub' % (search_str.replace(" ", "+").replace("-","+"))))
+            google_matches.append('https://www.google.com/search?q=site:saxo.com %s+epub' % search_str.replace(" ", "+").replace("-","+"))
             
-        
+            google_raw = br.open_novisit(google_matches[0], timeout=30).read().strip()
+            google_root = parse(google_raw)
+            google_nodes = google_root.xpath('(//div[@class="g"])//a/@href')
+            log.info(google_nodes)
+            for url in google_nodes[:2]:
+                if url != "#":
+                    matches.append(url)  
+
         # Return if no ISBN
         if abort.is_set():
             return
