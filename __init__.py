@@ -27,7 +27,7 @@ from calibre.library.comments import sanitize_comments_html
 
 class Saxo(Source):
     name = 'Saxo'
-    description = ('Downloads Metadata and Covers from Saxo.dk based on ISBN')
+    description = ('Downloads Metadata and Covers from Saxo.dk based on ISBN, Saxo id or Title&Author')
     supported_platforms = ['windows', 'osx', 'linux']
     author = 'Mick Kirkegaard'
     version = (1, 1, 0)
@@ -73,14 +73,13 @@ class Saxo(Source):
             search_str = title
             for name in authors:
                 search_str = search_str + " " + name
-            log.info("    Making matches with title: %s" % title)
-            log.info('%s' % ('https://www.google.com/search?q=site:saxo.com %s+epub' % (search_str.replace(" ", "+").replace("-","+"))))
+            #log.info("    Making matches with title: %s" % title)
+            #log.info('%s' % ('https://www.google.com/search?q=site:saxo.com %s+epub' % (search_str.replace(" ", "+").replace("-","+"))))
             google_matches.append('https://www.google.com/search?q=site:saxo.com %s+epub' % search_str.replace(" ", "+").replace("-","+"))
-            
             google_raw = br.open_novisit(google_matches[0], timeout=30).read().strip()
             google_root = parse(google_raw)
             google_nodes = google_root.xpath('(//div[@class="g"])//a/@href')
-            log.info(google_nodes)
+            #log.info(google_nodes)
             for url in google_nodes[:2]:
                 if url != "#":
                     matches.append(url)  
