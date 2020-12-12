@@ -1,2 +1,5 @@
+[B]Version 1.1.0[/B] - 02 Nov 2020
+Added Saxo ID, and title&author search.
+
 [B]Version 1.0.0[/B] - 02 Nov 2020
 Initial release of plugin
